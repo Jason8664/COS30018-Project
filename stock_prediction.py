@@ -21,10 +21,28 @@ import pandas as pd
 import pandas_datareader as web
 import datetime as dt
 import tensorflow as tf
+import os
+import time
+import random
 
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
+from sklearn.model_selection import train_test_split
 from tensorflow.keras.layers import Dense, Dropout, LSTM, InputLayer
+from yahoo_fin import stock_info as si
+from collections import deque
+
+# set seed, so we can get the same results after rerunning several times
+np.random.seed(314)
+tf.random.set_seed(314)
+random.seed(314)
+
+def shuffle_in_unison(a, b):
+    # shuffle two arrays in the same way
+    state = np.random.get_state()
+    np.random.shuffle(a)
+    np.random.set_state(state)
+    np.random.shuffle(b)
 
 #------------------------------------------------------------------------------
 # Load Data
@@ -35,9 +53,144 @@ from tensorflow.keras.layers import Dense, Dropout, LSTM, InputLayer
 #------------------------------------------------------------------------------
 DATA_SOURCE = "yahoo"
 COMPANY = "FB"
+# current date
+date_now = time.strftime("%Y-%m-%d")
+ticker_data_filename = os.path.join("data", f"{DATA_SOURCE}_{date_now}.csv")
 
-TRAIN_START = dt.datetime(2012, 5, 23)     # Start date to read
-TRAIN_END = dt.datetime(2020, 1, 7)       # End date to read
+def load_data(COMPANY, n_steps=50, scale=True, shuffle=True, lookup_step=1, split_by_date=True,
+                test_size=0.2, feature_columns=['adjclose', 'volume', 'open', 'high', 'low']):
+    # see if ticker is already a loaded stock from yahoo finance
+    if isinstance(COMPANY, str):
+        # load it from yahoo_fin library
+        df = si.get_data(COMPANY)
+    elif isinstance(COMPANY, pd.DataFrame):
+        # already loaded, use it directly
+        df = COMPANY
+    else:
+        raise TypeError("ticker can be either a str or a `pd.DataFrame` instances")
+
+    # this will contain all the elements we want to return from this function
+    result = {}
+    # we will also return the original dataframe itself
+    result['df'] = df.copy()
+
+    # make sure that the passed feature_columns exist in the dataframe
+    for col in feature_columns:
+        assert col in df.columns, f"'{col}' does not exist in the dataframe."
+
+    # add date as a column
+    if "date" not in df.columns:
+        df["date"] = df.index
+
+    if scale:
+        column_scaler = {}
+        # scale the data (prices) from 0 to 1
+        for column in feature_columns:
+            scaler = MinMaxScaler()
+            df[column] = scaler.fit_transform(np.expand_dims(df[column].values, axis=1))
+            column_scaler[column] = scaler
+
+        # add the MinMaxScaler instances to the result returned
+        result["column_scaler"] = column_scaler
+
+    # add the target column (label) by shifting by `lookup_step`
+    df['future'] = df['adjclose'].shift(-lookup_step)
+
+    # last `lookup_step` columns contains NaN in future column
+    # get them before droping NaNs
+    last_sequence = np.array(df[feature_columns].tail(lookup_step))
+    
+    # drop NaNs
+    df.dropna(inplace=True)
+
+    sequence_data = []
+    sequences = deque(maxlen=n_steps)
+
+    for entry, target in zip(df[feature_columns + ["date"]].values, df['future'].values):
+        sequences.append(entry)
+        if len(sequences) == n_steps:
+            sequence_data.append([np.array(sequences), target])
+
+    # get the last sequence by appending the last `n_step` sequence with `lookup_step` sequence
+    # for instance, if n_steps=50 and lookup_step=10, last_sequence should be of 60 (that is 50+10) length
+    # this last_sequence will be used to predict future stock prices that are not available in the dataset
+    last_sequence = list([s[:len(feature_columns)] for s in sequences]) + list(last_sequence)
+    last_sequence = np.array(last_sequence).astype(np.float32)
+    # add to result
+    result['last_sequence'] = last_sequence
+    
+    # construct the X's and y's
+    X, y = [], []
+    for seq, target in sequence_data:
+        X.append(seq)
+        y.append(target)
+
+    # convert to numpy arrays
+    X = np.array(X)
+    y = np.array(y)
+
+    if split_by_date:
+        # split the dataset into training & testing sets by date (not randomly splitting)
+        train_samples = int((1 - test_size) * len(X))
+        result["X_train"] = X[:train_samples]
+        result["y_train"] = y[:train_samples]
+        result["X_test"]  = X[train_samples:]
+        result["y_test"]  = y[train_samples:]
+        if shuffle:
+            # shuffle the datasets for training (if shuffle parameter is set)
+            shuffle_in_unison(result["X_train"], result["y_train"])
+            shuffle_in_unison(result["X_test"], result["y_test"])
+    else:    
+        # split the dataset randomly
+        result["X_train"], result["X_test"], result["y_train"], result["y_test"] = train_test_split(X, y, 
+                                                                                test_size=test_size, shuffle=shuffle)
+
+    # get the list of test set dates
+    dates = result["X_test"][:, -1, -1]
+    # retrieve test features from the original dataframe
+    result["test_df"] = result["df"].loc[dates]
+    # remove duplicated dates in the testing dataframe
+    result["test_df"] = result["test_df"][~result["test_df"].index.duplicated(keep='first')]
+    # remove dates from the training/testing sets & convert to float32
+    result["X_train"] = result["X_train"][:, :, :len(feature_columns)].astype(np.float32)
+    result["X_test"] = result["X_test"][:, :, :len(feature_columns)].astype(np.float32)
+
+    return result
+
+# create these folders if they does not exist
+if not os.path.isdir("results"):
+    os.mkdir("results")
+
+if not os.path.isdir("logs"):
+    os.mkdir("logs")
+
+if not os.path.isdir("data"):
+    os.mkdir("data")
+
+# load the data
+data = load_data(COMPANY,  n_steps=50, scale=True, split_by_date=False, 
+                shuffle=True, lookup_step=15, test_size=0.2, 
+                feature_columns=['adjclose', 'volume', 'open', 'high', 'low'])
+# save the dataframe
+data["df"].to_csv(ticker_data_filename)
+
+#TRAIN_START = dt.datetime(2012, 5, 23)     # Start date to read
+#TRAIN_END = dt.datetime(2020, 1, 7)       # End date to read
+
+#------------------------------------------------------------------------------
+# date input
+# ask user for start date and have them enter it in the format requested YYYY-MM-DD
+# make start date store the user's start date
+# ask user for end date and have them enter it in the format requested YYYY-MM-DD
+# make end date store the user's start date
+#------------------------------------------------------------------------------
+date_entry = input('Enter start date in YYYY-MM-DD format ')
+year, month, day = map(int, date_entry.split('-'))
+TRAIN_START = dt.datetime(year, month, day)
+date_entry = input('Enter end date in YYYY-MM-DD format ')
+year, month, day = map(int, date_entry.split('-'))
+TRAIN_END = dt.datetime(year, month, day)
+
 
 data = web.DataReader(COMPANY, DATA_SOURCE, TRAIN_START, TRAIN_END) # Read data using yahoo
 # It could be a bug with pandas_datareader.DataReader() but it
@@ -55,6 +208,8 @@ data = web.DataReader(COMPANY, DATA_SOURCE, TRAIN_START, TRAIN_END) # Read data 
 # 2) Use a different price value eg. mid-point of Open & Close
 # 3) Change the Prediction days
 #------------------------------------------------------------------------------
+
+
 PRICE_VALUE = "Close"
 
 scaler = MinMaxScaler(feature_range=(0, 1)) 
@@ -77,7 +232,14 @@ scaled_data = scaler.fit_transform(data[PRICE_VALUE].values.reshape(-1, 1))
 # given to reshape so as to maintain the same number of elements.
 
 # Number of days to look back to base the prediction
-PREDICTION_DAYS = 60 # Original
+#------------------------------------------------------------------------------
+# date input
+# ask user amount of days to base prediction on
+# convert the input into integer and store it into prediction days
+#------------------------------------------------------------------------------
+days = int(input('Enter amount of days for prediction '))
+PREDICTION_DAYS = days
+#PREDICTION_DAYS = 60 # Original
 
 # To store the training data
 x_train = []
