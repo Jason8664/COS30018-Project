@@ -5,3 +5,4 @@ numpy
 pandas
 pandas-datareader
 yahoo_fin
+mplfinance

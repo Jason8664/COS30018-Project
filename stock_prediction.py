@@ -24,6 +24,8 @@ import tensorflow as tf
 import os
 import time
 import random
+import mplfinance as fplt
+#import plotly.graph_objects as go
 
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
@@ -31,6 +33,7 @@ from sklearn.model_selection import train_test_split
 from tensorflow.keras.layers import Dense, Dropout, LSTM, InputLayer
 from yahoo_fin import stock_info as si
 from collections import deque
+#from bqplot import pyplot as fplt
 
 # set seed, so we can get the same results after rerunning several times
 np.random.seed(314)
@@ -404,13 +407,50 @@ predicted_prices = scaler.inverse_transform(predicted_prices)
 # 3) Show chart of next few days (predicted)
 #------------------------------------------------------------------------------
 
-plt.plot(actual_prices, color="black", label=f"Actual {COMPANY} Price")
-plt.plot(predicted_prices, color="green", label=f"Predicted {COMPANY} Price")
-plt.title(f"{COMPANY} Share Price")
-plt.xlabel("Time")
-plt.ylabel(f"{COMPANY} Share Price")
-plt.legend()
-plt.show()
+#------------------------------------------------------------------------------
+# Candlestick chart
+# df to get the dataframe
+# df[TRAIN_START:TRAIN_END] starting and end date
+# title for labeling the graph
+# ylabel for y axis label
+# savefig for saving a png of the graph
+#------------------------------------------------------------------------------
+
+df = si.get_data(COMPANY)
+
+mc = fplt.make_marketcolors(
+                            up='tab:blue',down='tab:red',
+                            edge='lime',
+                            wick={'up':'blue','down':'red'},
+                            volume='tab:green',
+                           )
+
+s  = fplt.make_mpf_style(marketcolors=mc)
+
+fplt.plot(
+            df[TRAIN_START:TRAIN_END],
+            type='candle',
+            title= f"{COMPANY} Share Price",
+            ylabel= f"{COMPANY} Share Price",
+            figratio=(12,8),
+            volume=True,
+            ylabel_lower='Shares\nTraded',
+            show_nontrading=True,
+            style=s,
+            savefig='Facebook.png'
+        )
+
+#------------------------------------------------------------------------------
+# Original code
+# plt.plot(actual_prices, color="black", label=f"Actual {COMPANY} Price")
+# plt.plot(predicted_prices, color="green", label=f"Predicted {COMPANY} Price")
+# plt.title(f"{COMPANY} Share Price")
+# plt.xlabel("Time")
+# plt.ylabel(f"{COMPANY} Share Price")
+# plt.legend()
+# plt.show()
+#------------------------------------------------------------------------------
+
 
 #------------------------------------------------------------------------------
 # Predict next day
