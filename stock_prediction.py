@@ -30,7 +30,7 @@ import mplfinance as fplt
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from sklearn.model_selection import train_test_split
-from tensorflow.keras.layers import Dense, Dropout, LSTM, InputLayer
+from tensorflow.keras.layers import Dense, Dropout, LSTM, RNN, InputLayer
 from yahoo_fin import stock_info as si
 from collections import deque
 #from bqplot import pyplot as fplt
@@ -271,6 +271,7 @@ x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
 # If not, save the data into a directory
 # 2) Change the model to increase accuracy?
 #------------------------------------------------------------------------------
+
 model = Sequential() # Basic neural network
 # See: https://www.tensorflow.org/api_docs/python/tf/keras/Sequential
 # for some useful examples
@@ -334,6 +335,47 @@ model.fit(x_train, y_train, epochs=25, batch_size=32)
 # the aggreated errors/losses from a batch of, say, 32 input samples
 # and update our model based on this aggregated loss.
 
+#------------------------------------------------------------------------------
+# model inputs ver.LSTM
+# ask user for number of layers, the size of each layer, the layer name and return a Deep Learning model.
+#------------------------------------------------------------------------------
+units = int(input('Units '))
+n_layers = int(input('Size of layers '))
+model = Sequential()
+def create_model(sequence_length, n_features, units=units, cell=LSTM,n_layers=n_layers, dropout=0.3,
+                loss="mean_absolute_error", optimizer="rmsprop", bidirectional=False):
+    
+    for i in range(n_layers):
+        layer._name = 'layer' + str(i)
+        if i == 0:
+            # first layer
+            if bidirectional:
+                model.add(Bidirectional(cell(units, return_sequences=True), batch_input_shape=(32, x_train.shape[1], 1)))
+            else:
+                model.add(cell(units, return_sequences=True, batch_input_shape=(32, x_train.shape[1], 1)))
+        elif i == n_layers - 1:
+            # last layer
+            if bidirectional:
+                model.add(Bidirectional(cell(units, return_sequences=True), batch_input_shape=(32, x_train.shape[1], 1)))
+            else:
+                model.add(cell(units, return_sequences=True, batch_input_shape=(32, x_train.shape[1], 1)))
+        else:
+            # hidden layers
+            if bidirectional:
+                model.add(Bidirectional(cell(units, return_sequences=True), batch_input_shape=(32, x_train.shape[1], 1)))
+            else:
+                model.add(cell(units, return_sequences=True, batch_input_shape=(32, x_train.shape[1], 1)))
+        # add dropout after each layer
+        model.add(Dropout(dropout))
+    model.add(Dense(1, layer._name))
+    model.compile(loss=loss, metrics=["mean_absolute_error"], optimizer=optimizer)
+    model.fit(x_train, y_train, epochs=25, batch_size=32)
+#------------------------------------------------------------------------------
+# model inputs ver.RNN
+# ask user for number of layers, the size of each layer, the layer name and return a Deep Learning model.
+#------------------------------------------------------------------------------
+
+
 # TO DO:
 # Save the model and reload it
 # Sometimes, it takes a lot of effort to train your model (again, look at
@@ -392,11 +434,11 @@ for x in range(PREDICTION_DAYS, len(model_inputs)):
     x_test.append(model_inputs[x - PREDICTION_DAYS:x, 0])
 
 x_test = np.array(x_test)
-x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
+x_test = np.reshape(x_test, ((x_test.shape[0], x_test.shape[1] * 1)))
 # TO DO: Explain the above 5 lines
 
 predicted_prices = model.predict(x_test)
-predicted_prices = scaler.inverse_transform(predicted_prices)
+predicted_prices = scaler.inverse_transform(predicted_prices) #Found array with dim 3. Estimator expected <= 2 python
 # Clearly, as we transform our data into the normalized range (0,1),
 # we now need to reverse this transformation 
 #------------------------------------------------------------------------------
@@ -437,7 +479,7 @@ fplt.plot(
             ylabel_lower='Shares\nTraded',
             show_nontrading=True,
             style=s,
-            savefig='Facebook.png'
+            #savefig='Facebook.png'
         )
 
 #------------------------------------------------------------------------------
@@ -459,7 +501,7 @@ fplt.plot(
 
 real_data = [model_inputs[len(model_inputs) - PREDICTION_DAYS:, 0]]
 real_data = np.array(real_data)
-real_data = np.reshape(real_data, (real_data.shape[0], real_data.shape[1], 1))
+real_data = np.reshape(real_data, ((real_data.shape[0], real_data.shape[1] * 1)))
 
 prediction = model.predict(real_data)
 prediction = scaler.inverse_transform(prediction)
